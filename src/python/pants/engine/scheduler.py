@@ -467,6 +467,7 @@ class SchedulerSession:
     :param subject: subject for the request.
     :returns: An exit_code for the given Goal.
     """
+    logger.debug(f'product: {product}, subject: {subject}')
     request = self.execution_request([product], [subject])
     returns, throws = self.execute(request)
 

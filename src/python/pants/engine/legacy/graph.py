@@ -42,8 +42,9 @@ from pants.engine.legacy.structs import (
   HydrateableField,
   SourcesField,
   TargetAdaptor,
+  TagsField,
 )
-from pants.engine.mapper import ResolveError
+from pants.engine.mapper import AddressMapper, ResolveError
 from pants.engine.objects import Collection
 from pants.engine.parser import HydratedStruct
 from pants.engine.rules import RootRule, rule
@@ -440,6 +441,10 @@ class InvalidOwnersOfArgs(Exception):
   pass
 
 
+# @union
+# class AsOwnersRequest: pass
+
+
 @dataclass(frozen=True)
 class OwnersRequest:
   """A request for the owners of a set of file paths."""
@@ -614,6 +619,11 @@ def _eager_fileset_with_spec(
 
 
 @rule
+def hydrate_tags(tags_field: TagsField) -> HydratedField:
+  return HydratedField(name='tags', value=tags_field.tags)
+
+
+@rule
 async def hydrate_sources(
   sources_field: SourcesField, glob_match_error_behavior: GlobMatchErrorBehavior,
 ) -> HydratedField:
@@ -784,4 +794,5 @@ def create_legacy_graph_tasks():
     sources_snapshots_from_filesystem_specs,
     RootRule(FilesystemSpecs),
     RootRule(OwnersRequest),
+    hydrate_tags,
   ]

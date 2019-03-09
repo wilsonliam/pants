@@ -8,6 +8,7 @@ from typing import Any, Iterable, Optional, Tuple, cast
 from pants.backend.docgen.targets.doc import Page
 from pants.backend.jvm.targets.jvm_app import JvmApp
 from pants.backend.jvm.targets.jvm_binary import JvmBinary
+from pants.backend.python.rules import python_test_runner
 from pants.backend.python.targets.python_app import PythonApp
 from pants.backend.python.targets.python_binary import PythonBinary
 from pants.backend.python.targets.python_library import PythonLibrary
@@ -34,6 +35,7 @@ from pants.engine.legacy.graph import LegacyBuildGraph, create_legacy_graph_task
 from pants.engine.legacy.options_parsing import create_options_parsing_rules
 from pants.engine.legacy.parser import LegacyPythonCallbacksParser
 from pants.engine.legacy.structs import (
+  AppAdaptor,
   JvmAppAdaptor,
   JvmBinaryAdaptor,
   PageAdaptor,

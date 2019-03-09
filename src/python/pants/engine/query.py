@@ -1,15 +1,18 @@
-# coding=utf-8
 # Copyright 2019 Pants project contributors (see CONTRIBUTORS.md).
 # Licensed under the Apache License, Version 2.0 (see LICENSE).
 
 import ast
-from abc import ABC, abstractmethod
+import logging
+import re
+from abc import ABC, abstractmethod, abstractproperty
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple, Type, TypeVar
+from typing import Any, Callable, Dict, Generic, Optional, Tuple, Type, TypeVar
+
+from twitter.common.collections import OrderedSet
 
 from pants.build_graph.address import Address
 from pants.engine.addressable import Addresses
-from pants.engine.legacy.graph import Owners, OwnersRequest
+from pants.engine.legacy.graph import Owners, HydratedTarget, OwnersRequest, TransitiveHydratedTargets
 from pants.engine.rules import UnionMembership, UnionRule, RootRule, rule, union
 from pants.engine.selectors import Get
 from pants.scm.subsystems.changed import ChangedOptions, ChangedAddresses, ChangedRequest, IncludeDependeesOption, UncachedScmWrapper
@@ -17,8 +20,11 @@ from pants.util.meta import classproperty
 from pants.util.strutil import safe_shlex_split
 
 
+logger = logging.getLogger(__name__)
+
+
 @union
-class QueryComponent(ABC):
+class QueryParser(ABC):
 
   @classproperty
   @abstractmethod
@@ -39,14 +45,45 @@ class QueryComponent(ABC):
     """
 
 
+@union
+class Operator(ABC):
+  """???"""
+
+  def quick_hydrate_with_input(self, addresses: Addresses):
+    """
+    ???/produce an object containing build file addresses which has a single rule graph path to
+    IntermediateResults, AND which has:
+      UnionRule(QueryOperation, <type of object returned by hydrate()>)
+    """
+    return None
+
+  def as_hydration_request(self, hts: Tuple[HydratedTarget, ...]):
+    """???"""
+    return None
+
+
 @dataclass(frozen=True)
 class QueryAddresses:
   addresses: Addresses
 
 
+@union
+class QueryOperation: pass
+
+
 @dataclass(frozen=True)
-class OwnerOf(QueryComponent):
-  files: Tuple[str]
+class HydratedOperator:
+  operator: Operator
+
+
+@dataclass(frozen=True)
+class IntermediateResults:
+  addresses: Addresses
+
+
+@dataclass(frozen=True)
+class OwnerOf(QueryParser):
+  files: Tuple[str, ...]
 
   function_name = 'owner_of'
 
@@ -56,14 +93,15 @@ class OwnerOf(QueryComponent):
 
 
 @rule
-async def owner_of_request(owner_of: OwnerOf) -> QueryAddresses:
+async def owner_of_request(owner_of: OwnerOf) -> HydratedOperator:
   request = OwnersRequest(sources=owner_of.files)
   owners = await Get[Owners](OwnersRequest, request)
-  return QueryAddresses(Addresses(bfa.to_address() for bfa in owners.addresses))
+  addresses = Addresses(bfa.to_address() for bfa in owners.addresses)
+  return HydratedOperator(IntersectionOperator(addresses))
 
 
 @dataclass(frozen=True)
-class ChangesSince(QueryComponent):
+class ChangesSince(QueryParser):
   changes_since: str
   include_dependees: IncludeDependeesOption
 
@@ -79,7 +117,7 @@ class ChangesSince(QueryComponent):
 async def changes_since_request(
     scm_wrapper: UncachedScmWrapper,
     changes_since: ChangesSince,
-) -> QueryAddresses:
+) -> HydratedOperator:
   scm = scm_wrapper.scm
   changed_options = ChangedOptions(
     changes_since=changes_since.changes_since,
@@ -91,11 +129,11 @@ async def changes_since_request(
     sources=tuple(changed_options.changed_files(scm=scm)),
     include_dependees=changed_options.include_dependees,
   ))
-  return QueryAddresses(changed.addresses)
+  return HydratedOperator(IntersectionOperator(changed.addresses))
 
 
 @dataclass(frozen=True)
-class ChangesForDiffspec(QueryComponent):
+class ChangesForDiffspec(QueryParser):
   diffspec: str
   include_dependees: IncludeDependeesOption
 
@@ -106,12 +144,11 @@ class ChangesForDiffspec(QueryComponent):
     return cls(diffspec=str(diffspec),
                include_dependees=IncludeDependeesOption(include_dependees))
 
-
 @rule
 async def changes_for_diffspec_request(
     scm_wrapper: UncachedScmWrapper,
     changes_for_diffspec: ChangesForDiffspec,
-) -> QueryAddresses:
+) -> HydratedOperator:
   scm = scm_wrapper.scm
   changed_options = ChangedOptions(
     changes_since=None,
@@ -123,10 +160,63 @@ async def changes_for_diffspec_request(
     sources=tuple(changed_options.changed_files(scm=scm)),
     include_dependees=changed_options.include_dependees,
   ))
-  return QueryAddresses(changed.addresses)
+  return HydratedOperator(IntersectionOperator(changed.addresses))
 
 
-_T = TypeVar('_T', bound=QueryComponent)
+@union
+class OperatorRequest: pass
+
+
+@dataclass(frozen=True)
+class FilterOperator(Operator):
+  filter_func: Callable
+
+  def as_hydration_request(self, hts: Tuple[HydratedTarget, ...]):
+    return FilterOperands(
+      filter_func=self.filter_func,
+      hts=hts,
+    )
+
+
+@dataclass(frozen=True)
+class FilterOperands(QueryOperation):
+  filter_func: Callable
+  hts: Tuple[HydratedTarget, ...]
+
+  def apply_filter(self) -> Addresses:
+    return Addresses(tuple(
+      t.address.to_address() for t in self.hts
+      if self.filter_func(t.adaptor)
+    ))
+
+
+@rule
+def filter_results(operands: FilterOperands) -> IntermediateResults:
+  return IntermediateResults(operands.apply_filter())
+
+
+@dataclass(frozen=True)
+class TypeFilter(QueryParser):
+  allowed_type_aliases: Tuple[str, ...]
+
+  function_name = 'type_filter'
+
+  @classmethod
+  def parse_from_args(cls, *allowed_type_aliases):
+    return cls(allowed_type_aliases=tuple(allowed_type_aliases))
+
+  def quick_operator(self):
+    return FilterOperator(
+      lambda t: t.type_alias in self.allowed_type_aliases
+    )
+
+
+@rule
+def filter_request(type_filter: TypeFilter) -> HydratedOperator:
+  return HydratedOperator(type_filter.quick_operator())
+
+
+_T = TypeVar('_T', bound=QueryParser)
 
 
 @dataclass(frozen=True)
@@ -138,21 +228,210 @@ class KnownQueryExpressions:
 def known_query_expressions(union_membership: UnionMembership) -> KnownQueryExpressions:
   return KnownQueryExpressions({
     union_member.function_name: union_member
-    for union_member in union_membership.union_rules[QueryComponent]
+    for union_member in union_membership.union_rules[QueryParser]
   })
 
 
 @dataclass(frozen=True)
-class QueryParseInput:
-  expr: str
-
-
-class QueryParseError(Exception): pass
+class QueryComponentWrapper(Generic[_T]):
+  underlying: _T
 
 
 @dataclass(frozen=True)
-class QueryComponentWrapper:
-  underlying: _T
+class AddressRegexFilter(QueryParser):
+  regexes: Tuple[str, ...]
+
+  function_name = 'no_regex'
+
+  @classmethod
+  def parse_from_args(cls, *regexes):
+    return cls(regexes=tuple(regexes))
+
+  def quick_operator(self):
+    return FilterOperator(
+      lambda t: not any(re.search(rx, t.address.spec)
+                        for rx in self.regexes)
+    )
+
+
+@rule
+def address_regex_filter_results(op: AddressRegexFilter) -> HydratedOperator:
+  return HydratedOperator(op.quick_operator())
+
+
+@dataclass(frozen=True)
+class TagRegexFilter(QueryParser):
+  tag_regexes: Tuple[str, ...]
+
+  function_name = 'no_tag_regex'
+
+  @classmethod
+  def parse_from_args(cls, *tag_regexes):
+    return cls(tag_regexes=tuple(tag_regexes))
+
+  def quick_operator(self):
+    return FilterOperator(
+      lambda t: not any(
+        re.search(rx, tag)
+        for rx in self.tag_regexes
+        for tag in getattr(t, 'tags', ())
+      )
+    )
+
+
+@rule
+def tag_regex_filter_results(op: TagRegexFilter) -> HydratedOperator:
+  return HydratedOperator(op.quick_operator())
+
+
+class Noop(QueryParser):
+
+  function_name = 'noop'
+
+  @classmethod
+  def parse_from_args(cls):
+    return cls()
+
+  def get_noop_operator(self):
+    return NoopOperator()
+
+
+class NoopOperator(Operator):
+
+  def quick_hydrate_with_input(self, addresses: Addresses):
+    return NoopOperands(addresses)
+
+
+@rule
+def hydrate_noop(noop: Noop) -> HydratedOperator:
+  return HydratedOperator(noop.get_noop_operator())
+
+
+@dataclass(frozen=True)
+class NoopOperands(QueryOperation):
+  addresses: Addresses
+
+
+@rule
+def noop_results(noop_operands: NoopOperands) -> IntermediateResults:
+  return IntermediateResults(noop_operands.addresses)
+
+
+@dataclass(frozen=True)
+class UnionOperator(Operator):
+  to_union: Addresses
+
+  def quick_hydrate_with_input(self, addresses: Addresses):
+    return UnionOperands(lhs=self.to_union,
+                         rhs=addresses)
+
+
+@dataclass(frozen=True)
+class UnionOperands(QueryOperation):
+  lhs: Addresses
+  rhs: Addresses
+
+  def apply_union(self) -> Addresses:
+    lhs = OrderedSet(self.lhs.dependencies)
+    rhs = OrderedSet(self.rhs.dependencies)
+    return Addresses(tuple(lhs & rhs))
+
+
+@rule
+def union_results(operands: UnionOperands) -> IntermediateResults:
+  unioned_addresses = operands.apply_union()
+  return IntermediateResults(unioned_addresses)
+
+
+# TODO: make a more flexible --query interface so that each step of the query pipeline can specify
+# whether it wants to perform a union or intersection operation!!!!!
+
+
+@dataclass(frozen=True)
+class GetOperandsRequest:
+  op: Operator
+  addresses: Addresses
+
+
+@dataclass(frozen=True)
+class WrappedOperands:
+  operands: QueryOperation
+
+
+@dataclass(frozen=True)
+class IntersectionOperator(Operator):
+  to_intersect: Addresses
+
+  def quick_hydrate_with_input(self, addresses: Addresses):
+    return IntersectionOperands(lhs=self.to_intersect,
+                                rhs=addresses)
+
+
+@rule
+async def hydrate_operands(req: GetOperandsRequest) -> WrappedOperands:
+  maybe_quick_operands = req.op.quick_hydrate_with_input(req.addresses)
+  if maybe_quick_operands is not None:
+    return WrappedOperands(maybe_quick_operands)
+
+  thts = await Get[TransitiveHydratedTargets](Addresses, req.addresses)
+  orig_addresses = frozenset(req.addresses.dependencies)
+  hts_within_original_set = [
+    ht
+    for ht in thts.closure
+    if ht.address in orig_addresses
+  ]
+  logger.debug(f'len(hts)={len(hts_within_original_set)}, len(addrs)={len(orig_addresses)}')
+  operands = req.op.as_hydration_request(tuple(hts_within_original_set))
+  assert operands is not None
+  return WrappedOperands(operands)
+
+
+@dataclass(frozen=True)
+class IntersectionOperands(QueryOperation):
+  lhs: Addresses
+  rhs: Addresses
+
+  def apply_intersect(self) -> Addresses:
+    lhs = OrderedSet(self.lhs.dependencies)
+    rhs = OrderedSet(self.rhs.dependencies)
+    return Addresses(tuple(lhs & rhs))
+
+
+@rule
+def intersect_results(intersection_operands: IntersectionOperands) -> IntermediateResults:
+  intersected_addresses = intersection_operands.apply_intersect()
+  return IntermediateResults(intersected_addresses)
+
+
+@dataclass(frozen=True)
+class QueryPipeline:
+  query_components: Tuple[QueryParser, ...]
+
+
+@dataclass(frozen=True)
+class QueryPipelineRequest:
+  pipeline: QueryPipeline
+  input_addresses: Addresses
+
+
+@rule
+async def process_query_pipeline(query_pipeline_request: QueryPipelineRequest) -> QueryAddresses:
+  query_pipeline = query_pipeline_request.pipeline
+  addresses = query_pipeline_request.input_addresses
+  logger.debug(f'initial addresses: {addresses}')
+  for op_req in query_pipeline.query_components:
+    logger.debug(f'op_req: {op_req}')
+    hydrated_operator = await Get[HydratedOperator](QueryParser, op_req)
+    logger.debug(f'cur addresses: {addresses}')
+    wrapped_operands = await Get[WrappedOperands](GetOperandsRequest(
+      op=hydrated_operator.operator,
+      addresses=addresses,
+    ))
+    logger.debug(f'wrapped_operands: {wrapped_operands}')
+    results = await Get[IntermediateResults](QueryOperation, wrapped_operands.operands)
+    addresses = results.addresses
+  logger.debug(f'query pipeline result: {addresses}')
+  return QueryAddresses(addresses)
 
 
 @dataclass(frozen=True)
@@ -200,12 +479,20 @@ def _parse_python_esque_function_call(expr: str) -> ParsedPythonesqueFunctionCal
   )
 
 
+@dataclass(frozen=True)
+class QueryParseInput:
+  expr: str
+
+
+class QueryParseError(Exception): pass
+
+
 # FIXME: allow returning an @union!!!
 @rule
 def parse_query_expr(s: QueryParseInput, known: KnownQueryExpressions) -> QueryComponentWrapper:
   """Parse the input string and attempt to find a query function matching the function call.
 
-  :return: A query component which can be resolved into `BuildFileAddresses` in the v2 engine.
+  :return: A query component which can be resolved into `QueryAddresses` in the v2 engine.
   """
   try:
     parsed_function_call = _parse_python_esque_function_call(s.expr)
@@ -226,16 +513,49 @@ def parse_query_expr(s: QueryParseInput, known: KnownQueryExpressions) -> QueryC
 
 def rules():
   return [
-    RootRule(OwnerOf),
-    RootRule(ChangesSince),
-    RootRule(QueryParseInput),
     RootRule(ChangesForDiffspec),
-    known_query_expressions,
-    UnionRule(QueryComponent, OwnerOf),
-    UnionRule(QueryComponent, ChangesSince),
-    UnionRule(QueryComponent, ChangesForDiffspec),
-    owner_of_request,
-    changes_since_request,
+    RootRule(ChangesSince),
+    RootRule(FilterOperands),
+    RootRule(GetOperandsRequest),
+    RootRule(IntersectionOperands),
+    RootRule(Noop),
+    RootRule(NoopOperands),
+    RootRule(OwnerOf),
+    RootRule(QueryParseInput),
+    RootRule(QueryPipelineRequest),
+    RootRule(UnionOperands),
+    UnionRule(Operator, FilterOperator),
+    UnionRule(Operator, IntersectionOperator),
+    UnionRule(Operator, NoopOperator),
+    UnionRule(Operator, UnionOperator),
+    UnionRule(OperatorRequest, ChangesForDiffspec),
+    UnionRule(OperatorRequest, ChangesSince),
+    UnionRule(OperatorRequest, Noop),
+    UnionRule(OperatorRequest, OwnerOf),
+    UnionRule(QueryOperation, FilterOperands),
+    UnionRule(QueryOperation, IntersectionOperands),
+    UnionRule(QueryOperation, NoopOperands),
+    UnionRule(QueryOperation, UnionOperands),
+    UnionRule(QueryParser, AddressRegexFilter),
+    UnionRule(QueryParser, ChangesForDiffspec),
+    UnionRule(QueryParser, ChangesSince),
+    UnionRule(QueryParser, Noop),
+    UnionRule(QueryParser, OwnerOf),
+    UnionRule(QueryParser, TagRegexFilter),
+    UnionRule(QueryParser, TypeFilter),
+    address_regex_filter_results,
     changes_for_diffspec_request,
+    changes_since_request,
+    filter_request,
+    filter_results,
+    hydrate_noop,
+    hydrate_operands,
+    intersect_results,
+    known_query_expressions,
+    noop_results,
+    owner_of_request,
     parse_query_expr,
+    process_query_pipeline,
+    tag_regex_filter_results,
+    union_results,
   ]

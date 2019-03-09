@@ -20,6 +20,9 @@ from pants.pantsd.service.fs_event_service import FSEventService
 from pants.pantsd.service.pants_service import PantsService
 
 
+logger = logging.getLogger(__name__)
+
+
 class SchedulerService(PantsService):
   """The pantsd scheduler service.
 
@@ -228,6 +231,7 @@ class SchedulerService(PantsService):
     )
     exit_code = PANTS_SUCCEEDED_EXIT_CODE
 
+    logger.info('target_roots: {}'.format(target_roots))
     v1_goals, ambiguous_goals, v2_goals = options.goals_by_version
 
     if v2_goals or (ambiguous_goals and global_options.v2):

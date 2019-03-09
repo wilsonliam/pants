@@ -21,6 +21,7 @@ python_library(
     'src/python/pants/engine/legacy:graph',
     'src/python/pants/engine/legacy:options_parsing',
     'src/python/pants/engine/legacy:parser',
+    'src/python/pants/engine:query',
     'src/python/pants/engine/legacy:structs',
     'src/python/pants/engine:build_files',
     'src/python/pants/engine:console',

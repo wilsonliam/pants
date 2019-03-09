@@ -90,15 +90,17 @@ class TargetAdaptor(StructWithDeps):
 
       base_globs = BaseGlobs.from_sources_field(sources, self.address.spec_path)
       path_globs = base_globs.to_path_globs(self.address.spec_path, conjunction_globs.conjunction)
-      sources_field = SourcesField(
-        self.address,
-        'sources',
-        base_globs.filespecs,
-        base_globs,
-        path_globs,
-        self.validate_sources,
+      return (
+        SourcesField(
+          self.address,
+          'sources',
+          base_globs.filespecs,
+          base_globs,
+          path_globs,
+          self.validate_sources,
+        ),
+        TagsField(tuple(getattr(self, 'tags', ()) or ())),
       )
-      return sources_field,
 
   @classproperty
   def default_sources_globs(cls):
@@ -125,6 +127,12 @@ class TargetAdaptor(StructWithDeps):
 @union
 class HydrateableField:
   """A marker for Target(Adaptor) fields for which the engine might perform extra construction."""
+
+
+@dataclass(frozen=True)
+class TagsField:
+  """???"""
+  tags: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -457,6 +465,7 @@ class GlobsWithConjunction:
 
 def rules():
   return [
+    UnionRule(HydrateableField, TagsField),
     UnionRule(HydrateableField, SourcesField),
     UnionRule(HydrateableField, BundlesField),
   ]
