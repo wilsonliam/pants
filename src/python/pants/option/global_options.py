@@ -362,6 +362,13 @@ class GlobalOptionsRegistrar(SubsystemClientMixin, Optionable):
                   'options and specifying the targets directly. These three types of target '
                   'selection are mutually exclusive.')
 
+    register('--query', type=list, default=[], fromfile=True, metavar='<query-expr>',
+             # TODO: rename this to restart_daemon=False! It's not clear where this option is even
+             # consumed.
+             daemon=False,
+             help='A list of query expressions which process the input target specs in a pipeline '
+                  'in order.')
+
     # These logging options are registered in the bootstrap phase so that plugins can log during
     # registration and not so that their values can be interpolated in configs.
     register('-d', '--logdir', advanced=True, metavar='<dir>',

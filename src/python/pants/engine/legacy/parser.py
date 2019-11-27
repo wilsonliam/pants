@@ -161,6 +161,8 @@ class LegacyPythonCallbacksParser(Parser):
     # _intentional_ mutation would require a deep clone, which doesn't seem worth the cost at
     # this juncture.
     self._parse_context._storage.clear(os.path.dirname(filepath))
+    # NB: This is where the python in a BUILD file is evaluated, specifically with the set of
+    # definitions in `self._symbols`!
     exec(python, dict(self._symbols))
 
     # Perform this check after successful execution, so we know the python is valid (and should

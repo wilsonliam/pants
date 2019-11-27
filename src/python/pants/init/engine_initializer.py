@@ -53,6 +53,7 @@ from pants.engine.mapper import AddressMapper, ResolveError
 from pants.engine.native import Native
 from pants.engine.parser import SymbolTable
 from pants.engine.platform import create_platform_rules
+from pants.engine.query import rules as query_rules
 from pants.engine.rules import RootRule, UnionMembership, rule
 from pants.engine.scheduler import Scheduler, SchedulerSession
 from pants.engine.selectors import Params
@@ -390,6 +391,9 @@ class EngineInitializer:
 
     build_root = build_root or get_buildroot()
     build_configuration = build_configuration or BuildConfigInitializer.get(options_bootstrapper)
+
+    build_configuration.register_rules(query_rules())
+
     bootstrap_options = options_bootstrapper.bootstrap_options.for_global_scope()
 
     build_file_aliases = build_configuration.registered_aliases()
@@ -467,6 +471,7 @@ class EngineInitializer:
       *create_options_parsing_rules(),
       *structs_rules(),
       *changed_rules(),
+      *query_rules(),
       *rules,
     )
 
