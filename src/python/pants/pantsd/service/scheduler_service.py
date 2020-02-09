@@ -231,7 +231,7 @@ class SchedulerService(PantsService):
     )
     exit_code = PANTS_SUCCEEDED_EXIT_CODE
 
-    logger.info('target_roots: {}'.format(target_roots))
+    logger.info('specs: {}'.format(specs))
     v1_goals, ambiguous_goals, v2_goals = options.goals_by_version
 
     if v2_goals or (ambiguous_goals and global_options.v2):

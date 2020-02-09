@@ -41,10 +41,10 @@ from pants.engine.legacy.structs import (
   BundlesField,
   HydrateableField,
   SourcesField,
-  TargetAdaptor,
   TagsField,
+  TargetAdaptor,
 )
-from pants.engine.mapper import AddressMapper, ResolveError
+from pants.engine.mapper import ResolveError
 from pants.engine.objects import Collection
 from pants.engine.parser import HydratedStruct
 from pants.engine.rules import RootRule, rule
@@ -439,10 +439,6 @@ class TopologicallyOrderedTargets:
 
 class InvalidOwnersOfArgs(Exception):
   pass
-
-
-# @union
-# class AsOwnersRequest: pass
 
 
 @dataclass(frozen=True)

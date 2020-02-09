@@ -22,7 +22,6 @@ from pants.engine.rules import RootRule, rule
 from pants.engine.selectors import Get, MultiGet
 from pants.goal.workspace import ScmWorkspace
 from pants.option.option_value_container import OptionValueContainer
-from pants.option.scope import Scope, ScopedOptions
 from pants.scm.scm import Scm
 from pants.subsystem.subsystem import Subsystem
 
@@ -120,7 +119,6 @@ class Changed(Subsystem):
              help='Include direct or transitive dependees of changed targets.')
     register('--fast', type=bool, default=False,
              help='Stop searching for owners once a source is mapped to at least one owning target.')
-
 
 
 @dataclass(frozen=True)

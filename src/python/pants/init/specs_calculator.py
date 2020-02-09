@@ -11,11 +11,22 @@ from pants.base.cmd_line_spec_parser import CmdLineSpecParser
 from pants.base.specs import AddressSpec, AddressSpecs, FilesystemSpecs, SingleAddress, Specs
 from pants.engine.addressable import Addresses
 from pants.engine.legacy.graph import Owners, OwnersRequest
-from pants.engine.query import QueryComponentWrapper, QueryParseInput, QueryAddresses, QueryPipeline, QueryPipelineRequest
+from pants.engine.query import (
+  QueryAddresses,
+  QueryComponentWrapper,
+  QueryParseInput,
+  QueryPipeline,
+  QueryPipelineRequest,
+)
 from pants.engine.scheduler import SchedulerSession
 from pants.engine.selectors import Params
 from pants.option.options import Options
-from pants.scm.subsystems.changed import ChangedAddresses, ChangedOptions, ChangedRequest, UncachedScmWrapper
+from pants.scm.subsystems.changed import (
+  ChangedAddresses,
+  ChangedOptions,
+  ChangedRequest,
+  UncachedScmWrapper,
+)
 
 
 logger = logging.getLogger(__name__)

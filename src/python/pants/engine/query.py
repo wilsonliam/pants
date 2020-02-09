@@ -4,20 +4,31 @@
 import ast
 import logging
 import re
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Generic, Optional, Tuple, Type, TypeVar
+from enum import Enum
+from typing import Any, Callable, Dict, Generic, Tuple, Type, TypeVar
 
 from twitter.common.collections import OrderedSet
 
-from pants.build_graph.address import Address
 from pants.engine.addressable import Addresses
-from pants.engine.legacy.graph import Owners, HydratedTarget, OwnersRequest, TransitiveHydratedTargets
-from pants.engine.rules import UnionMembership, UnionRule, RootRule, rule, union
+from pants.engine.legacy.graph import (
+  HydratedTarget,
+  Owners,
+  OwnersRequest,
+  TransitiveHydratedTargets,
+)
+from pants.engine.rules import RootRule, UnionMembership, UnionRule, rule, union
 from pants.engine.selectors import Get
-from pants.scm.subsystems.changed import ChangedOptions, ChangedAddresses, ChangedRequest, IncludeDependeesOption, UncachedScmWrapper
+from pants.scm.subsystems.changed import (
+  ChangedAddresses,
+  ChangedOptions,
+  ChangedRequest,
+  IncludeDependeesOption,
+  UncachedScmWrapper,
+)
+from pants.util.enums import match
 from pants.util.meta import classproperty
-from pants.util.strutil import safe_shlex_split
 
 
 logger = logging.getLogger(__name__)
@@ -81,15 +92,28 @@ class IntermediateResults:
   addresses: Addresses
 
 
+class TargetSelectionConjunction(Enum):
+  union = 'union'
+  intersection = 'intersection'
+
+  def get_operator(self, addresses: Addresses) -> Operator:
+    return match(self, {
+      self.union: lambda: UnionOperator(addresses),
+      self.intersection: lambda: IntersectionOperator(addresses),
+    })()
+
+
 @dataclass(frozen=True)
 class OwnerOf(QueryParser):
   files: Tuple[str, ...]
+  conjunction: TargetSelectionConjunction
 
   function_name = 'owner_of'
 
   @classmethod
-  def parse_from_args(cls, *args):
-    return cls(files=tuple([str(f) for f in args]))
+  def parse_from_args(cls, *args, conjunction=TargetSelectionConjunction.union):
+    return cls(files=tuple([str(f) for f in args]),
+               conjunction=TargetSelectionConjunction(conjunction))
 
 
 @rule
@@ -97,20 +121,26 @@ async def owner_of_request(owner_of: OwnerOf) -> HydratedOperator:
   request = OwnersRequest(sources=owner_of.files)
   owners = await Get[Owners](OwnersRequest, request)
   addresses = Addresses(bfa.to_address() for bfa in owners.addresses)
-  return HydratedOperator(IntersectionOperator(addresses))
+  operator = owner_of.conjunction.get_operator(addresses)
+  return HydratedOperator(operator)
 
 
 @dataclass(frozen=True)
 class ChangesSince(QueryParser):
   changes_since: str
   include_dependees: IncludeDependeesOption
+  conjunction: TargetSelectionConjunction
 
   function_name = 'changes_since'
 
   @classmethod
-  def parse_from_args(cls, changes_since, include_dependees=IncludeDependeesOption.NONE):
+  def parse_from_args(cls,
+                      changes_since,
+                      include_dependees=IncludeDependeesOption.NONE,
+                      conjunction=TargetSelectionConjunction.union):
     return cls(changes_since=str(changes_since),
-               include_dependees=IncludeDependeesOption(include_dependees))
+               include_dependees=IncludeDependeesOption(include_dependees),
+               conjunction=TargetSelectionConjunction(conjunction))
 
 
 @rule
@@ -129,20 +159,26 @@ async def changes_since_request(
     sources=tuple(changed_options.changed_files(scm=scm)),
     include_dependees=changed_options.include_dependees,
   ))
-  return HydratedOperator(IntersectionOperator(changed.addresses))
+  operator = changes_since.conjunction.get_operator(changed.addresses)
+  return HydratedOperator(operator)
 
 
 @dataclass(frozen=True)
 class ChangesForDiffspec(QueryParser):
   diffspec: str
   include_dependees: IncludeDependeesOption
+  conjunction: TargetSelectionConjunction
 
   function_name = 'changes_for_diffspec'
 
   @classmethod
-  def parse_from_args(cls, diffspec, include_dependees=IncludeDependeesOption.NONE):
+  def parse_from_args(cls,
+                      diffspec,
+                      include_dependees=IncludeDependeesOption.NONE,
+                      conjunction=TargetSelectionConjunction.union):
     return cls(diffspec=str(diffspec),
-               include_dependees=IncludeDependeesOption(include_dependees))
+               include_dependees=IncludeDependeesOption(include_dependees),
+               conjunction=TargetSelectionConjunction(conjunction))
 
 @rule
 async def changes_for_diffspec_request(
@@ -160,7 +196,8 @@ async def changes_for_diffspec_request(
     sources=tuple(changed_options.changed_files(scm=scm)),
     include_dependees=changed_options.include_dependees,
   ))
-  return HydratedOperator(IntersectionOperator(changed.addresses))
+  operator = changes_for_diffspec.conjunction.get_operator(changed.addresses)
+  return HydratedOperator(operator)
 
 
 @union
@@ -334,17 +371,13 @@ class UnionOperands(QueryOperation):
   def apply_union(self) -> Addresses:
     lhs = OrderedSet(self.lhs.dependencies)
     rhs = OrderedSet(self.rhs.dependencies)
-    return Addresses(tuple(lhs & rhs))
+    return Addresses(tuple(lhs | rhs))
 
 
 @rule
 def union_results(operands: UnionOperands) -> IntermediateResults:
   unioned_addresses = operands.apply_union()
   return IntermediateResults(unioned_addresses)
-
-
-# TODO: make a more flexible --query interface so that each step of the query pipeline can specify
-# whether it wants to perform a union or intersection operation!!!!!
 
 
 @dataclass(frozen=True)
