@@ -14,6 +14,7 @@ from twitter.common.collections import OrderedSet
 from pants.engine.addressable import Addresses
 from pants.engine.legacy.graph import (
   HydratedTarget,
+  HydratedTargets,
   Owners,
   OwnersRequest,
   TransitiveHydratedTargets,
@@ -436,6 +437,54 @@ def intersect_results(intersection_operands: IntersectionOperands) -> Intermedia
   return IntermediateResults(intersected_addresses)
 
 
+class Minimize(QueryParser):
+
+  function_name = 'minimize'
+
+  @classmethod
+  def parse_from_args(cls):
+    return cls()
+
+  def __repr__(self):
+    return 'Minimize()'
+
+
+@rule
+def minimize_operation(op: Minimize) -> HydratedOperator:
+  return HydratedOperator(MinimizeOperator())
+
+
+class MinimizeOperator(Operator):
+
+  def quick_hydrate_with_input(self, addresses: Addresses):
+    return MinimizeOperands(addresses)
+
+
+@dataclass(frozen=True)
+class MinimizeOperands(QueryOperation):
+  input_addresses: Addresses
+
+
+@rule
+async def minimize_results(operands: MinimizeOperands) -> IntermediateResults:
+  hts = await Get[HydratedTargets](Addresses, operands.input_addresses)
+
+  dep_roots = OrderedSet(
+    dep
+    for ht in hts
+    for dep in ht.dependencies
+  )
+  thts_internal = await Get[TransitiveHydratedTargets](Addresses(tuple(dep_roots)))
+  internal_deps = frozenset(ht.address.to_address() for ht in thts_internal.closure)
+
+  minimal_cover = OrderedSet()
+  for address in operands.input_addresses:
+    if address not in internal_deps and address not in minimal_cover:
+      minimal_cover.add(address)
+
+  return IntermediateResults(Addresses(tuple(minimal_cover)))
+
+
 @dataclass(frozen=True)
 class QueryPipeline:
   query_components: Tuple[QueryParser, ...]
@@ -538,7 +587,9 @@ def parse_query_expr(s: QueryParseInput, known: KnownQueryExpressions) -> QueryC
 
   selected_function = known.components.get(name, None)
   if selected_function:
-    return QueryComponentWrapper(selected_function.parse_from_args(*args, **kwargs))
+    query_component = selected_function.parse_from_args(*args, **kwargs)
+    logger.debug(f'query_component: {query_component}, args: {args}, kwargs: {kwargs}')
+    return QueryComponentWrapper(query_component)
   else:
     raise QueryParseError(
       f'Query function with name {name} not found (in expr {s})! The known functions are: {known}.')
@@ -569,12 +620,14 @@ def rules():
     UnionRule(QueryOperation, IntersectionOperands),
     UnionRule(QueryOperation, NoopOperands),
     UnionRule(QueryOperation, UnionOperands),
+    UnionRule(QueryOperation, MinimizeOperands),
     UnionRule(QueryParser, AddressRegexFilter),
     UnionRule(QueryParser, ChangesForDiffspec),
     UnionRule(QueryParser, ChangesSince),
     UnionRule(QueryParser, Noop),
     UnionRule(QueryParser, OwnerOf),
     UnionRule(QueryParser, TagRegexFilter),
+    UnionRule(QueryParser, Minimize),
     UnionRule(QueryParser, TypeFilter),
     address_regex_filter_results,
     changes_for_diffspec_request,
@@ -591,4 +644,6 @@ def rules():
     process_query_pipeline,
     tag_regex_filter_results,
     union_results,
+    minimize_results,
+    minimize_operation,
   ]
