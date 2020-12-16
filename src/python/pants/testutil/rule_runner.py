@@ -1,6 +1,7 @@
 # Copyright 2020 Pants project contributors (see CONTRIBUTORS.md).
 # Licensed under the Apache License, Version 2.0 (see LICENSE).
 
+import multiprocessing
 import os
 from dataclasses import dataclass
 from io import StringIO
@@ -34,6 +35,7 @@ from pants.engine.console import Console
 from pants.engine.fs import PathGlobs, PathGlobsAndRoot, Snapshot, Workspace
 from pants.engine.goal import Goal
 from pants.engine.internals.native import Native
+from pants.engine.internals.native_engine import PyExecutor
 from pants.engine.internals.scheduler import SchedulerSession
 from pants.engine.internals.selectors import Get, Params
 from pants.engine.internals.session import SessionValues
@@ -58,6 +60,9 @@ from pants.util.ordered_set import FrozenOrderedSet
 
 
 _O = TypeVar("_O")
+
+
+_EXECUTOR = PyExecutor(multiprocessing.cpu_count(), multiprocessing.cpu_count() * 4)
 
 
 @dataclass(frozen=True)
@@ -125,6 +130,7 @@ class RuleRunner:
             options_bootstrapper=options_bootstrapper,
             build_root=self.build_root,
             build_configuration=self.build_config,
+            executor=_EXECUTOR,
             execution_options=ExecutionOptions.from_bootstrap_options(global_options),
         ).new_session(
             build_id="buildid_for_test",

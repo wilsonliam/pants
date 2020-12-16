@@ -117,7 +117,6 @@ class Native(metaclass=SingletonMetaclass):
     def __init__(self):
         self.externs = Externs(self.lib)
         self.lib.externs_set(self.externs)
-        self._executor = PyExecutor()
 
     class BinaryLocationError(Exception):
         pass
@@ -193,14 +192,16 @@ class Native(metaclass=SingletonMetaclass):
 
         Raises an exception if the server exited abnormally
         """
-        self.lib.nailgun_server_await_shutdown(self._executor, nailgun_server)
+        self.lib.nailgun_server_await_shutdown(nailgun_server)
 
-    def new_nailgun_server(self, port: int, runner: RawFdRunner) -> PyNailgunServer:
+    def new_nailgun_server(
+        self, executor: PyExecutor, port: int, runner: RawFdRunner
+    ) -> PyNailgunServer:
         """Creates a nailgun server with a requested port.
 
         Returns the server and the actual port it bound to.
         """
-        return cast(PyNailgunServer, self.lib.nailgun_server_create(self._executor, port, runner))
+        return cast(PyNailgunServer, self.lib.nailgun_server_create(executor, port, runner))
 
     def new_tasks(self) -> PyTasks:
         return PyTasks()
@@ -234,6 +235,7 @@ class Native(metaclass=SingletonMetaclass):
         ca_certs_path: Optional[str],
         ignore_patterns: List[str],
         use_gitignore: bool,
+        executor: PyExecutor,
         execution_options,
         types: PyTypes,
     ) -> PyScheduler:
@@ -275,7 +277,7 @@ class Native(metaclass=SingletonMetaclass):
         return cast(
             PyScheduler,
             self.lib.scheduler_create(
-                self._executor,
+                executor,
                 tasks,
                 types,
                 # Project tree.

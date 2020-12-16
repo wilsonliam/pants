@@ -4,7 +4,7 @@
 import logging
 import os
 import sys
-from typing import Optional
+from typing import Optional, Tuple
 
 import pkg_resources
 
@@ -14,6 +14,7 @@ from pants.build_graph.build_configuration import BuildConfiguration
 from pants.init.extension_loader import load_backends_and_plugins
 from pants.init.plugin_resolver import PluginResolver
 from pants.option.global_options import GlobalOptions
+from pants.option.option_value_container import OptionValueContainer
 from pants.option.options_bootstrapper import OptionsBootstrapper
 from pants.option.subsystem import Subsystem
 from pants.util.dirutil import fast_relpath_optional
@@ -84,6 +85,19 @@ class OptionsInitializer:
             for si in optionable.known_scope_infos()
         ]
         return options_bootstrapper.get_full_options(known_scope_infos)
+
+    @staticmethod
+    def compute_executor_arguments(bootstrap_options: OptionValueContainer) -> Tuple[int, int]:
+        """Computes the arguments to construct a PyExecutor.
+
+        Does not directly construct a PyExecutor to avoid cycles.
+        """
+        rule_threads_max = (
+            bootstrap_options.rule_threads_max
+            if bootstrap_options.rule_threads_max
+            else 4 * bootstrap_options.rule_threads_core
+        )
+        return bootstrap_options.rule_threads_core, rule_threads_max
 
     @staticmethod
     def compute_pants_ignore(buildroot, global_options):
